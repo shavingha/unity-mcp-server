@@ -138,31 +138,46 @@ namespace Nurture.MCP.Editor.Services
                             false
                         );
 
-                        RenderTexture renderTexture = RenderTexture.GetTemporary(
-                            texture.width,
-                            texture.height,
-                            24
-                        );
+                        try
+                        {
+                            RenderTexture renderTexture = RenderTexture.GetTemporary(
+                                texture.width,
+                                texture.height,
+                                24
+                            );
 
-                        RenderTexture previousRenderTexture = camera.targetTexture;
-                        camera.targetTexture = renderTexture;
+                            RenderTexture previousRenderTexture = camera.targetTexture;
+                            camera.targetTexture = renderTexture;
 
-                        camera.Render();
+                            try
+                            {
+                                camera.Render();
 
-                        RenderTexture previousActiveTexture = RenderTexture.active;
-                        RenderTexture.active = renderTexture;
+                                RenderTexture previousActiveTexture = RenderTexture.active;
+                                RenderTexture.active = renderTexture;
 
-                        texture.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
-                        texture.Apply();
+                                try
+                                {
+                                    texture.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
+                                    texture.Apply();
 
-                        camera.targetTexture = previousRenderTexture;
-                        RenderTexture.active = previousActiveTexture;
-
-                        RenderTexture.ReleaseTemporary(renderTexture);
-
-                        screenshotBase64 = texture.GetPngBase64();
-
-                        UnityEngine.Object.DestroyImmediate(texture);
+                                    screenshotBase64 = texture.GetPngBase64();
+                                }
+                                finally
+                                {
+                                    RenderTexture.active = previousActiveTexture;
+                                }
+                            }
+                            finally
+                            {
+                                camera.targetTexture = previousRenderTexture;
+                                RenderTexture.ReleaseTemporary(renderTexture);
+                            }
+                        }
+                        finally
+                        {
+                            UnityEngine.Object.DestroyImmediate(texture);
+                        }
                     }
                     else if (EditorApplication.isPlaying)
                     {
@@ -171,27 +186,34 @@ namespace Nurture.MCP.Editor.Services
                         captureGO.hideFlags = HideFlags.HideAndDontSave;
                         var capturer = captureGO.AddComponent<ScreenshotCapturer>();
 
-                        Coroutine captureCoroutine = capturer.StartCoroutine(capturer.CaptureEndOfFrame());
-
-                        // Wait for capture to complete
-                        int waitCount = 0;
-                        while (!capturer.IsDone && waitCount < 100)
+                        try
                         {
-                            await Task.Delay(50);
-                            waitCount++;
+                            Coroutine captureCoroutine = capturer.StartCoroutine(capturer.CaptureEndOfFrame());
+
+                            // Wait for capture to complete
+                            int waitCount = 0;
+                            while (!capturer.IsDone && waitCount < 100)
+                            {
+                                await Task.Delay(50);
+                                waitCount++;
+                            }
+
+                            if (!capturer.IsDone || capturer.CapturedTexture == null)
+                            {
+                                capturer.StopCoroutine(captureCoroutine);
+                                throw new McpException("Failed to capture screenshot in Play mode");
+                            }
+
+                            screenshotBase64 = capturer.CapturedTexture.GetPngBase64();
                         }
-
-                        if (!capturer.IsDone || capturer.CapturedTexture == null)
+                        finally
                         {
-                            capturer.StopCoroutine(captureCoroutine);
+                            if (capturer.CapturedTexture != null)
+                            {
+                                UnityEngine.Object.DestroyImmediate(capturer.CapturedTexture);
+                            }
                             UnityEngine.Object.DestroyImmediate(captureGO);
-                            throw new McpException("Failed to capture screenshot in Play mode");
                         }
-
-                        screenshotBase64 = capturer.CapturedTexture.GetPngBase64();
-
-                        UnityEngine.Object.DestroyImmediate(capturer.CapturedTexture);
-                        UnityEngine.Object.DestroyImmediate(captureGO);
                     }
                     else
                     {
@@ -218,31 +240,46 @@ namespace Nurture.MCP.Editor.Services
 
                         var texture = new Texture2D(width, height, TextureFormat.RGB24, false);
 
-                        RenderTexture renderTexture = RenderTexture.GetTemporary(
-                            width,
-                            height,
-                            24
-                        );
+                        try
+                        {
+                            RenderTexture renderTexture = RenderTexture.GetTemporary(
+                                width,
+                                height,
+                                24
+                            );
 
-                        RenderTexture previousRenderTexture = sceneCamera.targetTexture;
-                        sceneCamera.targetTexture = renderTexture;
+                            RenderTexture previousRenderTexture = sceneCamera.targetTexture;
+                            sceneCamera.targetTexture = renderTexture;
 
-                        sceneCamera.Render();
+                            try
+                            {
+                                sceneCamera.Render();
 
-                        RenderTexture previousActiveTexture = RenderTexture.active;
-                        RenderTexture.active = renderTexture;
+                                RenderTexture previousActiveTexture = RenderTexture.active;
+                                RenderTexture.active = renderTexture;
 
-                        texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                        texture.Apply();
+                                try
+                                {
+                                    texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                                    texture.Apply();
 
-                        sceneCamera.targetTexture = previousRenderTexture;
-                        RenderTexture.active = previousActiveTexture;
-
-                        RenderTexture.ReleaseTemporary(renderTexture);
-
-                        screenshotBase64 = texture.GetPngBase64();
-
-                        UnityEngine.Object.DestroyImmediate(texture);
+                                    screenshotBase64 = texture.GetPngBase64();
+                                }
+                                finally
+                                {
+                                    RenderTexture.active = previousActiveTexture;
+                                }
+                            }
+                            finally
+                            {
+                                sceneCamera.targetTexture = previousRenderTexture;
+                                RenderTexture.ReleaseTemporary(renderTexture);
+                            }
+                        }
+                        finally
+                        {
+                            UnityEngine.Object.DestroyImmediate(texture);
+                        }
                     }
 
                     return new ImageContentBlock()
@@ -296,6 +333,10 @@ namespace Nurture.MCP.Editor.Services
                     }
 
                     string result;
+                    if (string.IsNullOrEmpty(action))
+                    {
+                        throw new McpException("Action is required. Supported actions: click, input, toggle, select.");
+                    }
                     switch (action.ToLower())
                     {
                         case "click":
@@ -322,7 +363,7 @@ namespace Nurture.MCP.Editor.Services
 
         private static string PerformClick(GameObject gameObject)
         {
-            var button = gameObject.GetComponent<Button>();
+            var button = gameObject.GetComponent<UnityEngine.UI.Button>();
             if (button != null)
             {
                 if (!button.interactable)
@@ -362,17 +403,28 @@ namespace Nurture.MCP.Editor.Services
                 return $"Set InputField '{gameObject.name}' text to: {value}";
             }
 
-            var tmpInputField = gameObject.GetComponent<TMPro.TMP_InputField>();
-            if (tmpInputField != null)
+            // Try TMP_InputField via reflection to avoid assembly dependency
+            var tmpInputFieldType = gameObject.GetComponent("TMP_InputField");
+            if (tmpInputFieldType != null)
             {
-                if (!tmpInputField.interactable)
+                var type = tmpInputFieldType.GetType();
+                var interactableProp = type.GetProperty("interactable");
+                if (interactableProp != null && !(bool)interactableProp.GetValue(tmpInputFieldType))
                 {
                     throw new McpException($"TMP_InputField '{gameObject.name}' is not interactable.");
                 }
 
-                tmpInputField.text = value;
-                tmpInputField.onValueChanged?.Invoke(value);
-                tmpInputField.onEndEdit?.Invoke(value);
+                var textProp = type.GetProperty("text");
+                textProp?.SetValue(tmpInputFieldType, value);
+
+                var onValueChangedField = type.GetField("onValueChanged");
+                var onValueChanged = onValueChangedField?.GetValue(tmpInputFieldType);
+                onValueChanged?.GetType().GetMethod("Invoke", new[] { typeof(string) })?.Invoke(onValueChanged, new object[] { value });
+
+                var onEndEditField = type.GetField("onEndEdit");
+                var onEndEdit = onEndEditField?.GetValue(tmpInputFieldType);
+                onEndEdit?.GetType().GetMethod("Invoke", new[] { typeof(string) })?.Invoke(onEndEdit, new object[] { value });
+
                 return $"Set TMP_InputField '{gameObject.name}' text to: {value}";
             }
 
@@ -381,7 +433,7 @@ namespace Nurture.MCP.Editor.Services
 
         private static string PerformToggle(GameObject gameObject, string value)
         {
-            var toggle = gameObject.GetComponent<Toggle>();
+            var toggle = gameObject.GetComponent<UnityEngine.UI.Toggle>();
             if (toggle == null)
             {
                 throw new McpException($"No Toggle component found on: {gameObject.name}");
@@ -439,33 +491,67 @@ namespace Nurture.MCP.Editor.Services
                 }
             }
 
-            var tmpDropdown = gameObject.GetComponent<TMPro.TMP_Dropdown>();
-            if (tmpDropdown != null)
+            // Try TMP_Dropdown via reflection to avoid assembly dependency
+            var tmpDropdownComponent = gameObject.GetComponent("TMP_Dropdown");
+            if (tmpDropdownComponent != null)
             {
-                if (!tmpDropdown.interactable)
+                var type = tmpDropdownComponent.GetType();
+                var interactableProp = type.GetProperty("interactable");
+                if (interactableProp != null && !(bool)interactableProp.GetValue(tmpDropdownComponent))
                 {
                     throw new McpException($"TMP_Dropdown '{gameObject.name}' is not interactable.");
                 }
 
+                var optionsProp = type.GetProperty("options");
+                var options = optionsProp?.GetValue(tmpDropdownComponent) as System.Collections.IList;
+                if (options == null)
+                {
+                    throw new McpException($"Could not get options from TMP_Dropdown '{gameObject.name}'.");
+                }
+
+                var valueProp = type.GetProperty("value");
+                var onValueChangedField = type.GetField("onValueChanged");
+                var onValueChanged = onValueChangedField?.GetValue(tmpDropdownComponent);
+
                 if (int.TryParse(value, out int index))
                 {
-                    if (index < 0 || index >= tmpDropdown.options.Count)
+                    if (index < 0 || index >= options.Count)
                     {
-                        throw new McpException($"TMP_Dropdown index {index} out of range. Valid range: 0-{tmpDropdown.options.Count - 1}");
+                        throw new McpException($"TMP_Dropdown index {index} out of range. Valid range: 0-{options.Count - 1}");
                     }
-                    tmpDropdown.value = index;
-                    tmpDropdown.onValueChanged?.Invoke(index);
-                    return $"Selected TMP_Dropdown '{gameObject.name}' option at index {index}: {tmpDropdown.options[index].text}";
+                    valueProp?.SetValue(tmpDropdownComponent, index);
+                    onValueChanged?.GetType().GetMethod("Invoke", new[] { typeof(int) })?.Invoke(onValueChanged, new object[] { index });
+
+                    var optionTextProp = options[index]?.GetType().GetProperty("text");
+                    var optionText = optionTextProp?.GetValue(options[index]) as string ?? "";
+                    return $"Selected TMP_Dropdown '{gameObject.name}' option at index {index}: {optionText}";
                 }
                 else
                 {
-                    var optionIndex = tmpDropdown.options.FindIndex(o => o.text == value);
+                    int optionIndex = -1;
+                    for (int i = 0; i < options.Count; i++)
+                    {
+                        var optionTextProp = options[i]?.GetType().GetProperty("text");
+                        var optionText = optionTextProp?.GetValue(options[i]) as string;
+                        if (optionText == value)
+                        {
+                            optionIndex = i;
+                            break;
+                        }
+                    }
+
                     if (optionIndex < 0)
                     {
-                        throw new McpException($"TMP_Dropdown option '{value}' not found. Available options: {string.Join(", ", tmpDropdown.options.Select(o => o.text))}");
+                        var optionTexts = new List<string>();
+                        for (int i = 0; i < options.Count; i++)
+                        {
+                            var optionTextProp = options[i]?.GetType().GetProperty("text");
+                            optionTexts.Add(optionTextProp?.GetValue(options[i]) as string ?? "");
+                        }
+                        throw new McpException($"TMP_Dropdown option '{value}' not found. Available options: {string.Join(", ", optionTexts)}");
                     }
-                    tmpDropdown.value = optionIndex;
-                    tmpDropdown.onValueChanged?.Invoke(optionIndex);
+                    valueProp?.SetValue(tmpDropdownComponent, optionIndex);
+                    onValueChanged?.GetType().GetMethod("Invoke", new[] { typeof(int) })?.Invoke(onValueChanged, new object[] { optionIndex });
                     return $"Selected TMP_Dropdown '{gameObject.name}' option: {value}";
                 }
             }
@@ -531,6 +617,8 @@ namespace Nurture.MCP.Editor.Services
                         throw new McpException("UIDocument has no root visual element.");
                     }
 
+                        Debug.Log($"[MCP][interact_ui_toolkit] uiDocument='{uiDocument.gameObject.name}', rootChildren={root.childCount}, query='{elementQuery}', action='{action}', uiDocumentName='{uiDocumentName}'");
+
                     var element = QueryElement(root, elementQuery);
                     if (element == null)
                     {
@@ -538,6 +626,10 @@ namespace Nurture.MCP.Editor.Services
                     }
 
                     string result;
+                    if (string.IsNullOrEmpty(action))
+                    {
+                        throw new McpException("Action is required. Supported actions: click, input, toggle, select.");
+                    }
                     switch (action.ToLower())
                     {
                         case "click":
@@ -569,6 +661,25 @@ namespace Nurture.MCP.Editor.Services
                 return null;
             }
 
+            // 支持 panel/element 形式的层级查询，例如：
+            // "register-panel/#username" 或 "register-panel/username"
+            // 先在 root 下找到 panel 元素，然后在该 panel 内继续查询子元素
+            var slashIndex = query.IndexOf('/');
+            if (slashIndex > 0 && slashIndex < query.Length - 1)
+            {
+                var panelName = query.Substring(0, slashIndex);
+                var childQuery = query.Substring(slashIndex + 1);
+
+                var panelRoot = root.Q(panelName);
+                if (panelRoot == null)
+                {
+                    Debug.LogWarning($"[MCP][interact_ui_toolkit] Panel root not found for query '{query}', panelName='{panelName}'");
+                    return null;
+                }
+
+                return QueryElement(panelRoot, childQuery);
+            }
+
             if (query.StartsWith("#"))
             {
                 return root.Q(query.Substring(1));
@@ -588,7 +699,7 @@ namespace Nurture.MCP.Editor.Services
                     "TextField" => root.Q<TextField>(),
                     "Toggle" => root.Q<UnityEngine.UIElements.Toggle>(),
                     "DropdownField" => root.Q<DropdownField>(),
-                    "Slider" => root.Q<Slider>(),
+                    "Slider" => root.Q<UnityEngine.UIElements.Slider>(),
                     "SliderInt" => root.Q<SliderInt>(),
                     _ => root.Q(query)
                 };
@@ -634,6 +745,7 @@ namespace Nurture.MCP.Editor.Services
                     throw new McpException($"TextField '{query}' is not enabled.");
                 }
 
+                Debug.Log($"[MCP][interact_ui_toolkit][input] TextField query='{query}', name='{textField.name}', oldValue='{textField.value}', newValue='{value}'");
                 textField.value = value;
                 return $"Set TextField '{query}' value to: {value}";
             }
@@ -645,6 +757,7 @@ namespace Nurture.MCP.Editor.Services
                     throw new McpException($"Field '{query}' is not enabled.");
                 }
 
+                Debug.Log($"[MCP][interact_ui_toolkit][input] BaseField query='{query}', name='{stringField.name}', oldValue='{stringField.value}', newValue='{value}'");
                 stringField.value = value;
                 return $"Set field '{query}' value to: {value}";
             }

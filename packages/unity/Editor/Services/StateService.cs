@@ -94,9 +94,9 @@ namespace Nurture.MCP.Editor.Services
                             prefabStage != null
                                 ? new()
                                 {
-                                    Path = prefabStage.prefabAssetPath,
+                                    Path = prefabStage.assetPath,
                                     Guid = AssetDatabase.AssetPathToGUID(
-                                        prefabStage.prefabAssetPath
+                                        prefabStage.assetPath
                                     ),
                                     RootGameObjects = prefabStage
                                         .prefabContentsRoot.GetComponentsInChildren<Transform>()

@@ -1,5 +1,7 @@
 #if !NO_MCP
 
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -612,4 +614,5 @@ namespace Nurture.MCP.Editor.Services
     }
 }
 
+#nullable restore
 #endif
