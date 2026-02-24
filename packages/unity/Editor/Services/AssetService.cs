@@ -209,7 +209,7 @@ namespace Nurture.MCP.Editor.Services
                             AssetDatabase.TryGetGUIDAndLocalFileIdentifier(
                                 a,
                                 out _,
-                                out var compareFileID
+                                out long compareFileID
                             )
                             && compareFileID == fileIDLong
                         ) ?? throw new McpException("Asset not found");
@@ -552,7 +552,7 @@ namespace Nurture.MCP.Editor.Services
                         AssetDatabase.TryGetGUIDAndLocalFileIdentifier(
                             o,
                             out var guid,
-                            out var fileID
+                            out long fileID
                         );
 
                         if (fileID == 0 && o is GameObject gameObject)

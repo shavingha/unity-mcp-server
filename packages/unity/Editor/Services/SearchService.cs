@@ -236,7 +236,7 @@ namespace Nurture.MCP.Editor.Services
                             AssetDatabase.TryGetGUIDAndLocalFileIdentifier(
                                 obj,
                                 out var guid,
-                                out var fileID
+                                out long fileID
                             );
 
                             results.Add(

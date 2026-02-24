@@ -318,69 +318,83 @@ namespace Nurture.MCP.Editor.Services
                         // Start play mode
                         await EditorExtensions.FocusSceneView(cancellationToken);
 
-                        // Don't reload assemblies when entering play mode as that will break the MCP connection
-                        var savedEnterPlayModeOptions = EditorSettings.enterPlayModeOptions;
-                        EditorSettings.enterPlayModeOptions =
-                            EnterPlayModeOptions.DisableDomainReload;
-                        EditorApplication.isPlaying = true;
+                        // Prevent assembly reload during play mode transition
+                        EditorApplication.LockReloadAssemblies();
 
-                        // Wait for play mode to fully start
-                        while (!EditorApplication.isPlaying)
+                        try
                         {
-                            progress.Report(
-                                new ProgressNotificationValue()
-                                {
-                                    Message = "Waiting for play mode to start...",
-                                    Progress = 0.5f,
-                                    Total = 1.0f,
-                                }
-                            );
-                            await Task.Delay(100);
-                        }
+                            // Don't reload assemblies when entering play mode as that will break the MCP connection
+                            var savedEnterPlayModeOptions = EditorSettings.enterPlayModeOptions;
+                            EditorSettings.enterPlayModeOptions =
+                                EnterPlayModeOptions.DisableDomainReload;
+                            EditorApplication.isPlaying = true;
 
-                        float expires = Time.time + secondsToRun;
-
-                        // Play for run time
-                        while (Time.time < expires && EditorApplication.isPlaying)
-                        {
-                            progress.Report(
-                                new ProgressNotificationValue()
-                                {
-                                    Message = $"Running for {secondsToRun} seconds...",
-                                    Progress =
-                                        0.5f
-                                        + (0.4f * ((Time.time - (expires - secondsToRun)) / (float)secondsToRun)),
-                                    Total = 1.0f,
-                                }
-                            );
-
-                            await Task.Delay(1000);
-
-                            // Take a screenshot
-                            if (takeScreenshots)
+                            // Wait for play mode to fully start
+                            while (!EditorApplication.isPlaying)
                             {
-                                await Awaitable.EndOfFrameAsync();
-                                var texture = ScreenCapture.CaptureScreenshotAsTexture();
-                                screenshots.Add(texture.GetPngBase64());
-                                UnityEngine.Object.Destroy(texture);
+                                progress.Report(
+                                    new ProgressNotificationValue()
+                                    {
+                                        Message = "Waiting for play mode to start...",
+                                        Progress = 0.5f,
+                                        Total = 1.0f,
+                                    }
+                                );
+                                await Task.Delay(100);
                             }
-                        }
 
-                        EditorApplication.isPlaying = false;
+                            float expires = Time.time + secondsToRun;
 
-                        while (EditorApplication.isPlaying)
-                        {
-                            progress.Report(
-                                new ProgressNotificationValue()
+                            // Play for run time
+                            while (Time.time < expires && EditorApplication.isPlaying)
+                            {
+                                progress.Report(
+                                    new ProgressNotificationValue()
+                                    {
+                                        Message = $"Running for {secondsToRun} seconds...",
+                                        Progress =
+                                            0.5f
+                                            + (0.4f * ((Time.time - (expires - secondsToRun)) / (float)secondsToRun)),
+                                        Total = 1.0f,
+                                    }
+                                );
+
+                                await Task.Delay(1000);
+
+                                // Take a screenshot
+                                if (takeScreenshots)
                                 {
-                                    Message = "Waiting for play mode to end...",
-                                    Progress = 0.9f,
-                                    Total = 1.0f,
+                                    // Wait for end of frame using EditorApplication.delayCall
+                                    var tcs = new TaskCompletionSource<bool>();
+                                    EditorApplication.delayCall += () => tcs.TrySetResult(true);
+                                    await tcs.Task;
+                                    
+                                    var texture = ScreenCapture.CaptureScreenshotAsTexture();
+                                    screenshots.Add(texture.GetPngBase64());
+                                    UnityEngine.Object.Destroy(texture);
                                 }
-                            );
-                            await Task.Delay(100);
+                            }
+
+                            EditorApplication.isPlaying = false;
+
+                            while (EditorApplication.isPlaying)
+                            {
+                                progress.Report(
+                                    new ProgressNotificationValue()
+                                    {
+                                        Message = "Waiting for play mode to end...",
+                                        Progress = 0.9f,
+                                        Total = 1.0f,
+                                    }
+                                );
+                                await Task.Delay(100);
+                            }
+                            EditorSettings.enterPlayModeOptions = savedEnterPlayModeOptions;
                         }
-                        EditorSettings.enterPlayModeOptions = savedEnterPlayModeOptions;
+                        finally
+                        {
+                            EditorApplication.UnlockReloadAssemblies();
+                        }
                     });
 
                     var msg = $"Log messages: \n{result}.";

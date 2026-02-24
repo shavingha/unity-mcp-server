@@ -149,7 +149,7 @@ namespace Nurture.MCP.Editor
             return assets
                     .OfType<T>()
                     .FirstOrDefault(x =>
-                        AssetDatabase.TryGetGUIDAndLocalFileIdentifier(x, out _, out var fileID)
+                        AssetDatabase.TryGetGUIDAndLocalFileIdentifier(x, out _, out long fileID)
                         && fileID == longFileID
                     ) ?? throw new McpException("Failed to load GameObject from GUID");
         }
