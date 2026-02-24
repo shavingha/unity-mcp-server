@@ -65,33 +65,33 @@ This will automatically install the `is.nurture.mcp` package in your unity proje
 
 > Meet your Unity AI toolbox.
 
-| Tool                 | Description                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| **Assets**           |                                                                                                        |
-| `get_asset_contents` | Get the full contents of an asset or sub-asset.                                                        |
-| `copy_asset`         | Copy an asset to a new path.                                                                           |
-| `import_asset`       | Import an asset from the filesystem into Unity.                                                        |
-| `get_asset_importer` | Get the importer settings for an asset.                                                                |
-| **Prefabs**          |                                                                                                        |
-| `open_prefab`        | Open a Unity prefab in isolation mode so that it can be edited.                                        |
-| **Scenes**           |                                                                                                        |
-| `open_scene`         | Open a scene                                                                                           |
-| `close_scene`        | Close an open scene                                                                                    |
-| `save_scene`         | Save the current scene. If the scene is not dirty, this will do nothing.                               |
-| `get_game_object`    | Get the details of a game object in a loaded scene or prefab by its hierarchy path.                    |
-| `test_active_scene`  | Test the active scene by entering play mode and running for a given number of seconds.                 |
-| **Scripting**        |                                                                                                        |
-| `create_script`      | Create or replace a C# code file at the given path. This also checks to make sure the script compiles. |
-| `execute_code`       | Execute code inside the Unity editor.                                                                  |
-| `get_type_info`      | Get public fields and methods on a Unity fully qualified type name, including the assembly.            |
-| **Search**           |                                                                                                        |
-| `search`             | Search project assets and scene objects.                                                               |
-| **Editor State**     |                                                                                                        |
-| `get_state`          | Get the state of the Unity Editor.                                                                     |
-| `get_selection`      | Get the objects the user has currently selected in the editor.                                         |
-| **Vision**           |                                                                                                        |
-| `focus_game_object`  | Focus on a game object in the scene view.                                                              |
-| `screenshot`         | Retrieve a preview of what is focused in the scene view.                                               |
+| Tool                 | Description                                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Assets**           |                                                                                                                |
+| `get_asset_contents` | Get the full contents of an asset or sub-asset.                                                                |
+| `copy_asset`         | Copy an asset to a new path.                                                                                   |
+| `import_asset`       | Import an asset from the filesystem into Unity.                                                                |
+| `get_asset_importer` | Get the importer settings for an asset.                                                                        |
+| **Prefabs**          |                                                                                                                |
+| `open_prefab`        | Open a Unity prefab in isolation mode so that it can be edited.                                                |
+| **Scenes**           |                                                                                                                |
+| `open_scene`         | Open a scene                                                                                                   |
+| `close_scene`        | Close an open scene                                                                                            |
+| `save_scene`         | Save the current scene. If the scene is not dirty, this will do nothing.                                       |
+| `get_game_object`    | Get the details of a game object in a loaded scene or prefab by its hierarchy path.                            |
+| `test_active_scene`  | Test the active scene by entering play mode and running for a given number of seconds.                         |
+| **Scripting**        |                                                                                                                |
+| `create_script`      | Create or replace a C# code file at the given path. This also checks to make sure the script compiles.         |
+| `execute_code`       | Execute code inside the Unity editor.                                                                          |
+| `get_type_info`      | Get public fields and methods on a Unity fully qualified type name, including the assembly.                    |
+| **Search**           |                                                                                                                |
+| `search`             | Search project assets and scene objects.                                                                       |
+| **Editor State**     |                                                                                                                |
+| `get_state`          | Get the state of the Unity Editor.                                                                             |
+| `get_selection`      | Get the objects the user has currently selected in the editor.                                                 |
+| **Vision**           |                                                                                                                |
+| `focus_game_object`  | Focus on a game object in the scene view.                                                                      |
+| `screenshot`         | Capture a screenshot. In Play mode, captures the Game View (including UI). Otherwise, captures the Scene View. |
 
 ## Known Issues
 
@@ -145,5 +145,3 @@ Here are some tips to get the most out of Union:
   ```
 
 - ⚠️ **Important**: Do not use the `-logFile` command-line argument. The MCP server relies on Unity's standard output for communication.
-
-- 🖥️ **Split screen for vision**: For tools like `screenshot`, ensure the Unity editor is visible on your screen otherwise it will end up screenshotting the foreground window.

@@ -1,6 +1,7 @@
 #if !NO_MCP
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -14,6 +15,26 @@ using UnityEngine;
 
 namespace Nurture.MCP.Editor.Services
 {
+    internal class ScreenshotCapturer : MonoBehaviour
+    {
+        public Texture2D CapturedTexture { get; private set; }
+        public bool IsDone { get; private set; }
+
+        public IEnumerator CaptureEndOfFrame()
+        {
+            yield return new WaitForEndOfFrame();
+
+            int width = Screen.width;
+            int height = Screen.height;
+
+            CapturedTexture = new Texture2D(width, height, TextureFormat.RGB24, false);
+            CapturedTexture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+            CapturedTexture.Apply();
+
+            IsDone = true;
+        }
+    }
+
     [McpServerToolType]
     public static class ViewService
     {
@@ -81,15 +102,15 @@ namespace Nurture.MCP.Editor.Services
             Idempotent = true,
             OpenWorld = false,
             ReadOnly = true,
-            Title = "Unity Take Scene View Screenshot",
+            Title = "Unity Take Screenshot",
             Name = "screenshot"
         )]
-        [Description(@"Retrieve a preview of what is focused in the scene view.")]
+        [Description(@"Retrieve a screenshot. In Play mode, captures the Game View (including UI). Otherwise, captures the Scene View.")]
         internal static async Task<ImageContentBlock> TakeScreenshot(
             SynchronizationContext context,
             CancellationToken cancellationToken,
             [Description(
-                "The path to the camera to render. If null, it will use the editor scene view camera."
+                "The path to the camera to render. If null, it will use the Game View (in Play mode) or Scene View camera."
             )]
                 string cameraHierarchyPath = ""
         )
@@ -103,14 +124,10 @@ namespace Nurture.MCP.Editor.Services
                     if (cameraHierarchyPath?.Length > 0)
                     {
                         camera = GameObject.Find(cameraHierarchyPath)?.GetComponent<Camera>();
-
-                        // If camera object is null or doesn't have a camera, just use the scene view camera
-                        // Some LLMs hallucinate a value here because they can't help setting some argument
                     }
 
                     if (camera != null)
                     {
-                        // Create a new texture with the scene view's dimensions
                         var texture = new Texture2D(
                             (int)camera.pixelRect.width,
                             (int)camera.pixelRect.height,
@@ -124,41 +141,66 @@ namespace Nurture.MCP.Editor.Services
                             24
                         );
 
-                        // Store the current render texture and set our new one
                         RenderTexture previousRenderTexture = camera.targetTexture;
                         camera.targetTexture = renderTexture;
 
-                        // Render the scene view
                         camera.Render();
 
-                        // Store the active render texture and set our new one
                         RenderTexture previousActiveTexture = RenderTexture.active;
                         RenderTexture.active = renderTexture;
 
-                        // Read the pixels from the render texture to our texture
                         texture.ReadPixels(new Rect(0, 0, texture.width, texture.height), 0, 0);
                         texture.Apply();
 
-                        // Restore the previous render textures
                         camera.targetTexture = previousRenderTexture;
                         RenderTexture.active = previousActiveTexture;
 
-                        // Clean up
                         RenderTexture.ReleaseTemporary(renderTexture);
 
-                        // Convert the texture to base64
                         screenshotBase64 = texture.GetPngBase64();
 
                         UnityEngine.Object.DestroyImmediate(texture);
                     }
+                    else if (EditorApplication.isPlaying)
+                    {
+                        // In Play mode, use coroutine to capture at end of frame (includes UI)
+                        var captureGO = new GameObject("_ScreenshotCapturer");
+                        captureGO.hideFlags = HideFlags.HideAndDontSave;
+                        var capturer = captureGO.AddComponent<ScreenshotCapturer>();
+
+                        capturer.StartCoroutine(capturer.CaptureEndOfFrame());
+
+                        // Wait for capture to complete
+                        int waitCount = 0;
+                        while (!capturer.IsDone && waitCount < 100)
+                        {
+                            await Task.Delay(50);
+                            waitCount++;
+                        }
+
+                        if (!capturer.IsDone || capturer.CapturedTexture == null)
+                        {
+                            UnityEngine.Object.DestroyImmediate(captureGO);
+                            throw new McpException("Failed to capture screenshot in Play mode");
+                        }
+
+                        screenshotBase64 = capturer.CapturedTexture.GetPngBase64();
+
+                        UnityEngine.Object.DestroyImmediate(capturer.CapturedTexture);
+                        UnityEngine.Object.DestroyImmediate(captureGO);
+                    }
                     else
                     {
-                        // Get the last active scene view
+                        // Not in Play mode, capture Scene View
                         var sceneView =
                             SceneView.lastActiveSceneView
                             ?? throw new McpException("No active scene view found");
 
-                        await EditorExtensions.FocusSceneView(cancellationToken);
+                        var sceneCamera = sceneView.camera;
+                        if (sceneCamera == null)
+                        {
+                            throw new McpException("Scene view camera not available");
+                        }
 
                         int width = Mathf.RoundToInt(sceneView.position.width);
                         int height = Mathf.RoundToInt(sceneView.position.height);
@@ -169,15 +211,30 @@ namespace Nurture.MCP.Editor.Services
                                 $"Invalid Scene View dimensions: {width}x{height}"
                             );
                         }
-                        Color[] pixels = UnityEditorInternal.InternalEditorUtility.ReadScreenPixel(
-                            sceneView.position.min,
-                            width,
-                            height
-                        );
 
                         var texture = new Texture2D(width, height, TextureFormat.RGB24, false);
-                        texture.SetPixels(pixels);
+
+                        RenderTexture renderTexture = RenderTexture.GetTemporary(
+                            width,
+                            height,
+                            24
+                        );
+
+                        RenderTexture previousRenderTexture = sceneCamera.targetTexture;
+                        sceneCamera.targetTexture = renderTexture;
+
+                        sceneCamera.Render();
+
+                        RenderTexture previousActiveTexture = RenderTexture.active;
+                        RenderTexture.active = renderTexture;
+
+                        texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
                         texture.Apply();
+
+                        sceneCamera.targetTexture = previousRenderTexture;
+                        RenderTexture.active = previousActiveTexture;
+
+                        RenderTexture.ReleaseTemporary(renderTexture);
 
                         screenshotBase64 = texture.GetPngBase64();
 
