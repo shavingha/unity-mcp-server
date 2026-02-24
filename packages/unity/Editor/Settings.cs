@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using System.IO;
 
 namespace Nurture.MCP.Editor
 {
@@ -15,17 +16,26 @@ namespace Nurture.MCP.Editor
 
         public string[] AlwaysIncludedAssemblies => alwaysIncludedAssemblies;
 
+        private const string SettingsPath = "Assets/Settings/UnityMCPSettings.asset";
+        private const string SettingsDirectory = "Assets/Settings";
+
         public static Settings Instance
         {
             get
             {
-                var settings = AssetDatabase.LoadAssetAtPath<Settings>(
-                    "Assets/Settings/UnityMCPSettings.asset"
-                );
+                var settings = AssetDatabase.LoadAssetAtPath<Settings>(SettingsPath);
                 if (settings == null)
                 {
+                    // 确保目录存在
+                    if (!Directory.Exists(SettingsDirectory))
+                    {
+                        Directory.CreateDirectory(SettingsDirectory);
+                        AssetDatabase.Refresh();
+                    }
+                    
                     settings = CreateInstance<Settings>();
-                    AssetDatabase.CreateAsset(settings, "Assets/Settings/UnityMCPSettings.asset");
+                    AssetDatabase.CreateAsset(settings, SettingsPath);
+                    AssetDatabase.SaveAssets();
                 }
                 return settings;
             }

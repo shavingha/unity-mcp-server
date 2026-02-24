@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using Microsoft.Extensions.Logging;
 using UnityEngine;
@@ -74,18 +74,24 @@ namespace Nurture.MCP.Editor
 
         public void LogFormat(LogType logType, Object context, string format, params object[] args)
         {
-            if (!format.StartsWith("{"))
+            // JSON 格式的 MCP 协议消息 → 标准输出
+            if (format.StartsWith("{"))
             {
-                return;
+                _defaultLogger.LogFormat(logType, context, format, args);
             }
-
-            _defaultLogger.LogFormat(logType, context, format, args);
-            ;
+            // 错误/异常/警告 → 标准错误输出（不干扰 MCP 协议）
+            else if (logType == LogType.Error || logType == LogType.Exception || logType == LogType.Warning)
+            {
+                var message = args.Length > 0 ? string.Format(format, args) : format;
+                Console.Error.WriteLine($"[MCP {logType}] {message}");
+            }
         }
 
         public void LogException(Exception exception, Object context)
         {
-            return;
+            // 异常信息 → 标准错误输出（不干扰 MCP 协议）
+            Console.Error.WriteLine($"[MCP Exception] {exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine(exception.StackTrace);
         }
     }
 }
