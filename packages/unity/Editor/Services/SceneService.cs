@@ -298,61 +298,44 @@ namespace Nurture.MCP.Editor.Services
             [Description(@"If true, take a screenshot every second.")] bool takeScreenshots = false
         )
         {
-            Debug.Log("[MCP TestActiveScene] Starting - direct Task approach");
-            
             var tcs = new TaskCompletionSource<List<ContentBlock>>();
             
-            // 直接在主线程上执行，不使用 context.Run
             context.Post(_ =>
             {
                 try
                 {
-                    Debug.Log("[MCP TestActiveScene] Inside Post callback");
-                    
                     Scene activeScene = SceneManager.GetActiveScene();
                     string sceneName = activeScene.name;
-                    bool isDirty = activeScene.isDirty;
                     
-                    Debug.Log($"[MCP TestActiveScene] Scene: {sceneName}, isDirty: {isDirty}");
-                    
-                    if (isDirty)
+                    if (activeScene.isDirty)
                     {
-                        Debug.Log("[MCP TestActiveScene] Scene is dirty, throwing exception");
                         tcs.TrySetException(new McpException(
                             "The active scene is dirty. Please save it or discard changes before testing."
                         ));
                         return;
                     }
 
-                    // 先设置结果，再启动 Play Mode
                     var results = new List<ContentBlock> 
                     { 
                         new TextContentBlock() 
                         { 
-                            Text = $"Starting play mode for scene: {sceneName}. The game will run for {secondsToRun} seconds." 
+                            Text = $"Starting play mode for scene: {sceneName}." 
                         } 
                     };
                     
-                    Debug.Log("[MCP TestActiveScene] Setting result BEFORE starting play mode");
-                    bool resultSet = tcs.TrySetResult(results);
-                    Debug.Log($"[MCP TestActiveScene] Result set: {resultSet}");
+                    tcs.TrySetResult(results);
                     
-                    // 结果已设置，现在启动 Play Mode
-                    Debug.Log("[MCP TestActiveScene] Now starting play mode");
                     EditorApplication.LockReloadAssemblies();
                     EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
                     EditorApplication.isPlaying = true;
-                    Debug.Log("[MCP TestActiveScene] isPlaying set to true");
                 }
                 catch (Exception e)
                 {
-                    Debug.Log($"[MCP TestActiveScene] Exception: {e.Message}");
                     Debug.LogException(e);
                     tcs.TrySetException(e);
                 }
             }, null);
             
-            Debug.Log("[MCP TestActiveScene] Returning tcs.Task");
             return tcs.Task;
         }
 
