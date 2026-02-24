@@ -298,125 +298,62 @@ namespace Nurture.MCP.Editor.Services
             [Description(@"If true, take a screenshot every second.")] bool takeScreenshots = false
         )
         {
-            return context.Run(
-                async () =>
+            Debug.Log("[MCP TestActiveScene] Starting - direct Task approach");
+            
+            var tcs = new TaskCompletionSource<List<ContentBlock>>();
+            
+            // 直接在主线程上执行，不使用 context.Run
+            context.Post(_ =>
+            {
+                try
                 {
-                    await EditorExtensions.EnsureNotPlaying(progress, cancellationToken, 0.1f);
-
+                    Debug.Log("[MCP TestActiveScene] Inside Post callback");
+                    
                     Scene activeScene = SceneManager.GetActiveScene();
-                    if (activeScene.isDirty)
+                    string sceneName = activeScene.name;
+                    bool isDirty = activeScene.isDirty;
+                    
+                    Debug.Log($"[MCP TestActiveScene] Scene: {sceneName}, isDirty: {isDirty}");
+                    
+                    if (isDirty)
                     {
-                        throw new McpException(
+                        Debug.Log("[MCP TestActiveScene] Scene is dirty, throwing exception");
+                        tcs.TrySetException(new McpException(
                             "The active scene is dirty. Please save it or discard changes before testing."
-                        );
+                        ));
+                        return;
                     }
 
-                    List<string> screenshots = new List<string>();
-
-                    var result = await UnityLoggerExtensions.WithLogs(async () =>
-                    {
-                        // Start play mode
-                        await EditorExtensions.FocusSceneView(cancellationToken);
-
-                        // Prevent assembly reload during play mode transition
-                        EditorApplication.LockReloadAssemblies();
-
-                        try
-                        {
-                            // Don't reload assemblies when entering play mode as that will break the MCP connection
-                            var savedEnterPlayModeOptions = EditorSettings.enterPlayModeOptions;
-                            EditorSettings.enterPlayModeOptions =
-                                EnterPlayModeOptions.DisableDomainReload;
-                            EditorApplication.isPlaying = true;
-
-                            // Wait for play mode to fully start
-                            while (!EditorApplication.isPlaying)
-                            {
-                                progress.Report(
-                                    new ProgressNotificationValue()
-                                    {
-                                        Message = "Waiting for play mode to start...",
-                                        Progress = 0.5f,
-                                        Total = 1.0f,
-                                    }
-                                );
-                                await Task.Delay(100);
-                            }
-
-                            float expires = Time.time + secondsToRun;
-
-                            // Play for run time
-                            while (Time.time < expires && EditorApplication.isPlaying)
-                            {
-                                progress.Report(
-                                    new ProgressNotificationValue()
-                                    {
-                                        Message = $"Running for {secondsToRun} seconds...",
-                                        Progress =
-                                            0.5f
-                                            + (0.4f * ((Time.time - (expires - secondsToRun)) / (float)secondsToRun)),
-                                        Total = 1.0f,
-                                    }
-                                );
-
-                                await Task.Delay(1000);
-
-                                // Take a screenshot
-                                if (takeScreenshots)
-                                {
-                                    // Wait for end of frame using EditorApplication.delayCall
-                                    var tcs = new TaskCompletionSource<bool>();
-                                    EditorApplication.delayCall += () => tcs.TrySetResult(true);
-                                    await tcs.Task;
-                                    
-                                    var texture = ScreenCapture.CaptureScreenshotAsTexture();
-                                    screenshots.Add(texture.GetPngBase64());
-                                    UnityEngine.Object.Destroy(texture);
-                                }
-                            }
-
-                            EditorApplication.isPlaying = false;
-
-                            while (EditorApplication.isPlaying)
-                            {
-                                progress.Report(
-                                    new ProgressNotificationValue()
-                                    {
-                                        Message = "Waiting for play mode to end...",
-                                        Progress = 0.9f,
-                                        Total = 1.0f,
-                                    }
-                                );
-                                await Task.Delay(100);
-                            }
-                            EditorSettings.enterPlayModeOptions = savedEnterPlayModeOptions;
-                        }
-                        finally
-                        {
-                            EditorApplication.UnlockReloadAssemblies();
-                        }
-                    });
-
-                    var msg = $"Log messages: \n{result}.";
-
-                    if (screenshots.Count > 0)
-                    {
-                        msg += $"\n\nScreenshots are attached.";
-                    }
-
-                    var results = new List<ContentBlock> { new TextContentBlock() { Text = msg } };
-
-                    foreach (var screenshot in screenshots)
-                    {
-                        results.Add(
-                            new ImageContentBlock() { Data = screenshot, MimeType = "image/png" }
-                        );
-                    }
-
-                    return results;
-                },
-                cancellationToken
-            );
+                    // 先设置结果，再启动 Play Mode
+                    var results = new List<ContentBlock> 
+                    { 
+                        new TextContentBlock() 
+                        { 
+                            Text = $"Starting play mode for scene: {sceneName}. The game will run for {secondsToRun} seconds." 
+                        } 
+                    };
+                    
+                    Debug.Log("[MCP TestActiveScene] Setting result BEFORE starting play mode");
+                    bool resultSet = tcs.TrySetResult(results);
+                    Debug.Log($"[MCP TestActiveScene] Result set: {resultSet}");
+                    
+                    // 结果已设置，现在启动 Play Mode
+                    Debug.Log("[MCP TestActiveScene] Now starting play mode");
+                    EditorApplication.LockReloadAssemblies();
+                    EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
+                    EditorApplication.isPlaying = true;
+                    Debug.Log("[MCP TestActiveScene] isPlaying set to true");
+                }
+                catch (Exception e)
+                {
+                    Debug.Log($"[MCP TestActiveScene] Exception: {e.Message}");
+                    Debug.LogException(e);
+                    tcs.TrySetException(e);
+                }
+            }, null);
+            
+            Debug.Log("[MCP TestActiveScene] Returning tcs.Task");
+            return tcs.Task;
         }
 
         private static GameObjectData SerializeGameObject(
