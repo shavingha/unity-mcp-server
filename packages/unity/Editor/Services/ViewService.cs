@@ -617,8 +617,6 @@ namespace Nurture.MCP.Editor.Services
                         throw new McpException("UIDocument has no root visual element.");
                     }
 
-                        Debug.Log($"[MCP][interact_ui_toolkit] uiDocument='{uiDocument.gameObject.name}', rootChildren={root.childCount}, query='{elementQuery}', action='{action}', uiDocumentName='{uiDocumentName}'");
-
                     var element = QueryElement(root, elementQuery);
                     if (element == null)
                     {
@@ -745,7 +743,6 @@ namespace Nurture.MCP.Editor.Services
                     throw new McpException($"TextField '{query}' is not enabled.");
                 }
 
-                Debug.Log($"[MCP][interact_ui_toolkit][input] TextField query='{query}', name='{textField.name}', oldValue='{textField.value}', newValue='{value}'");
                 textField.value = value;
                 return $"Set TextField '{query}' value to: {value}";
             }
@@ -757,7 +754,6 @@ namespace Nurture.MCP.Editor.Services
                     throw new McpException($"Field '{query}' is not enabled.");
                 }
 
-                Debug.Log($"[MCP][interact_ui_toolkit][input] BaseField query='{query}', name='{stringField.name}', oldValue='{stringField.value}', newValue='{value}'");
                 stringField.value = value;
                 return $"Set field '{query}' value to: {value}";
             }
