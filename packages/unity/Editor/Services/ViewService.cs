@@ -12,6 +12,9 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
+using UnityEngine.UIElements;
 
 namespace Nurture.MCP.Editor.Services
 {
@@ -168,7 +171,7 @@ namespace Nurture.MCP.Editor.Services
                         captureGO.hideFlags = HideFlags.HideAndDontSave;
                         var capturer = captureGO.AddComponent<ScreenshotCapturer>();
 
-                        capturer.StartCoroutine(capturer.CaptureEndOfFrame());
+                        Coroutine captureCoroutine = capturer.StartCoroutine(capturer.CaptureEndOfFrame());
 
                         // Wait for capture to complete
                         int waitCount = 0;
@@ -180,6 +183,7 @@ namespace Nurture.MCP.Editor.Services
 
                         if (!capturer.IsDone || capturer.CapturedTexture == null)
                         {
+                            capturer.StopCoroutine(captureCoroutine);
                             UnityEngine.Object.DestroyImmediate(captureGO);
                             throw new McpException("Failed to capture screenshot in Play mode");
                         }
@@ -249,6 +253,490 @@ namespace Nurture.MCP.Editor.Services
                 },
                 cancellationToken
             );
+        }
+
+        [McpServerTool(
+            Destructive = false,
+            Idempotent = false,
+            OpenWorld = false,
+            ReadOnly = false,
+            Title = "Unity Interact UI",
+            Name = "interact_ui"
+        )]
+        [Description(@"Interact with a UI element in Play mode. Supports clicking buttons, inputting text, toggling, and selecting dropdown options.")]
+        internal static Task<string> InteractUI(
+            SynchronizationContext context,
+            CancellationToken cancellationToken,
+            [Description("The hierarchy path to the UI element (e.g., 'Canvas/Panel/Button').")]
+                string uiElementPath,
+            [Description("The type of interaction: 'click', 'input', 'toggle', or 'select'.")]
+                string action,
+            [Description("The value for the interaction. Required for 'input' (text to enter) and 'select' (option index or text). Optional for 'toggle' (true/false, defaults to toggle current state).")]
+                string value = ""
+        )
+        {
+            return context.Run(
+                () =>
+                {
+                    if (!EditorApplication.isPlaying)
+                    {
+                        throw new McpException("interact_ui requires Play mode. Start the game first.");
+                    }
+
+                    var gameObject = GameObject.Find(uiElementPath);
+                    if (gameObject == null)
+                    {
+                        throw new McpException($"UI element not found: {uiElementPath}");
+                    }
+
+                    var eventSystem = EventSystem.current;
+                    if (eventSystem == null)
+                    {
+                        throw new McpException("No EventSystem found in the scene.");
+                    }
+
+                    string result;
+                    switch (action.ToLower())
+                    {
+                        case "click":
+                            result = PerformClick(gameObject);
+                            break;
+                        case "input":
+                            result = PerformInput(gameObject, value);
+                            break;
+                        case "toggle":
+                            result = PerformToggle(gameObject, value);
+                            break;
+                        case "select":
+                            result = PerformSelect(gameObject, value);
+                            break;
+                        default:
+                            throw new McpException($"Unknown action: {action}. Supported actions: click, input, toggle, select.");
+                    }
+
+                    return Task.FromResult(result);
+                },
+                cancellationToken
+            );
+        }
+
+        private static string PerformClick(GameObject gameObject)
+        {
+            var button = gameObject.GetComponent<Button>();
+            if (button != null)
+            {
+                if (!button.interactable)
+                {
+                    throw new McpException($"Button '{gameObject.name}' is not interactable.");
+                }
+
+                var pointer = new PointerEventData(EventSystem.current);
+                ExecuteEvents.Execute(button.gameObject, pointer, ExecuteEvents.pointerClickHandler);
+                return $"Clicked button: {gameObject.name}";
+            }
+
+            var selectable = gameObject.GetComponent<Selectable>();
+            if (selectable != null)
+            {
+                var pointer = new PointerEventData(EventSystem.current);
+                ExecuteEvents.Execute(gameObject, pointer, ExecuteEvents.pointerClickHandler);
+                return $"Clicked UI element: {gameObject.name}";
+            }
+
+            throw new McpException($"No clickable component found on: {gameObject.name}");
+        }
+
+        private static string PerformInput(GameObject gameObject, string value)
+        {
+            var inputField = gameObject.GetComponent<InputField>();
+            if (inputField != null)
+            {
+                if (!inputField.interactable)
+                {
+                    throw new McpException($"InputField '{gameObject.name}' is not interactable.");
+                }
+
+                inputField.text = value;
+                inputField.onValueChanged?.Invoke(value);
+                inputField.onEndEdit?.Invoke(value);
+                return $"Set InputField '{gameObject.name}' text to: {value}";
+            }
+
+            var tmpInputField = gameObject.GetComponent<TMPro.TMP_InputField>();
+            if (tmpInputField != null)
+            {
+                if (!tmpInputField.interactable)
+                {
+                    throw new McpException($"TMP_InputField '{gameObject.name}' is not interactable.");
+                }
+
+                tmpInputField.text = value;
+                tmpInputField.onValueChanged?.Invoke(value);
+                tmpInputField.onEndEdit?.Invoke(value);
+                return $"Set TMP_InputField '{gameObject.name}' text to: {value}";
+            }
+
+            throw new McpException($"No InputField component found on: {gameObject.name}");
+        }
+
+        private static string PerformToggle(GameObject gameObject, string value)
+        {
+            var toggle = gameObject.GetComponent<Toggle>();
+            if (toggle == null)
+            {
+                throw new McpException($"No Toggle component found on: {gameObject.name}");
+            }
+
+            if (!toggle.interactable)
+            {
+                throw new McpException($"Toggle '{gameObject.name}' is not interactable.");
+            }
+
+            bool newValue;
+            if (string.IsNullOrEmpty(value))
+            {
+                newValue = !toggle.isOn;
+            }
+            else if (!bool.TryParse(value, out newValue))
+            {
+                throw new McpException($"Invalid toggle value: {value}. Use 'true' or 'false'.");
+            }
+
+            toggle.isOn = newValue;
+            return $"Set Toggle '{gameObject.name}' to: {newValue}";
+        }
+
+        private static string PerformSelect(GameObject gameObject, string value)
+        {
+            var dropdown = gameObject.GetComponent<Dropdown>();
+            if (dropdown != null)
+            {
+                if (!dropdown.interactable)
+                {
+                    throw new McpException($"Dropdown '{gameObject.name}' is not interactable.");
+                }
+
+                if (int.TryParse(value, out int index))
+                {
+                    if (index < 0 || index >= dropdown.options.Count)
+                    {
+                        throw new McpException($"Dropdown index {index} out of range. Valid range: 0-{dropdown.options.Count - 1}");
+                    }
+                    dropdown.value = index;
+                    dropdown.onValueChanged?.Invoke(index);
+                    return $"Selected Dropdown '{gameObject.name}' option at index {index}: {dropdown.options[index].text}";
+                }
+                else
+                {
+                    var optionIndex = dropdown.options.FindIndex(o => o.text == value);
+                    if (optionIndex < 0)
+                    {
+                        throw new McpException($"Dropdown option '{value}' not found. Available options: {string.Join(", ", dropdown.options.Select(o => o.text))}");
+                    }
+                    dropdown.value = optionIndex;
+                    dropdown.onValueChanged?.Invoke(optionIndex);
+                    return $"Selected Dropdown '{gameObject.name}' option: {value}";
+                }
+            }
+
+            var tmpDropdown = gameObject.GetComponent<TMPro.TMP_Dropdown>();
+            if (tmpDropdown != null)
+            {
+                if (!tmpDropdown.interactable)
+                {
+                    throw new McpException($"TMP_Dropdown '{gameObject.name}' is not interactable.");
+                }
+
+                if (int.TryParse(value, out int index))
+                {
+                    if (index < 0 || index >= tmpDropdown.options.Count)
+                    {
+                        throw new McpException($"TMP_Dropdown index {index} out of range. Valid range: 0-{tmpDropdown.options.Count - 1}");
+                    }
+                    tmpDropdown.value = index;
+                    tmpDropdown.onValueChanged?.Invoke(index);
+                    return $"Selected TMP_Dropdown '{gameObject.name}' option at index {index}: {tmpDropdown.options[index].text}";
+                }
+                else
+                {
+                    var optionIndex = tmpDropdown.options.FindIndex(o => o.text == value);
+                    if (optionIndex < 0)
+                    {
+                        throw new McpException($"TMP_Dropdown option '{value}' not found. Available options: {string.Join(", ", tmpDropdown.options.Select(o => o.text))}");
+                    }
+                    tmpDropdown.value = optionIndex;
+                    tmpDropdown.onValueChanged?.Invoke(optionIndex);
+                    return $"Selected TMP_Dropdown '{gameObject.name}' option: {value}";
+                }
+            }
+
+            throw new McpException($"No Dropdown component found on: {gameObject.name}");
+        }
+
+        [McpServerTool(
+            Destructive = false,
+            Idempotent = false,
+            OpenWorld = false,
+            ReadOnly = false,
+            Title = "Unity Interact UI Toolkit",
+            Name = "interact_ui_toolkit"
+        )]
+        [Description(@"Interact with a UI Toolkit element in Play mode. Supports clicking buttons, inputting text, toggling, and selecting dropdown options. Use this for UI built with UI Toolkit (UIDocument).")]
+        internal static Task<string> InteractUIToolkit(
+            SynchronizationContext context,
+            CancellationToken cancellationToken,
+            [Description("The name or path to the UI element. Use '#name' for name query, '.class' for class query, or 'Type' for type query. Examples: '#login-button', '.submit-btn', 'Button'.")]
+                string elementQuery,
+            [Description("The type of interaction: 'click', 'input', 'toggle', or 'select'.")]
+                string action,
+            [Description("The value for the interaction. Required for 'input' (text to enter) and 'select' (option index or text). Optional for 'toggle' (true/false, defaults to toggle current state).")]
+                string value = "",
+            [Description("Optional: The name of the GameObject with UIDocument component. If not specified, uses the first UIDocument found.")]
+                string uiDocumentName = ""
+        )
+        {
+            return context.Run(
+                () =>
+                {
+                    if (!EditorApplication.isPlaying)
+                    {
+                        throw new McpException("interact_ui_toolkit requires Play mode. Start the game first.");
+                    }
+
+                    UIDocument uiDocument = null;
+                    if (!string.IsNullOrEmpty(uiDocumentName))
+                    {
+                        var go = GameObject.Find(uiDocumentName);
+                        if (go != null)
+                        {
+                            uiDocument = go.GetComponent<UIDocument>();
+                        }
+                        if (uiDocument == null)
+                        {
+                            throw new McpException($"UIDocument not found on GameObject: {uiDocumentName}");
+                        }
+                    }
+                    else
+                    {
+                        uiDocument = UnityEngine.Object.FindObjectOfType<UIDocument>();
+                        if (uiDocument == null)
+                        {
+                            throw new McpException("No UIDocument found in the scene.");
+                        }
+                    }
+
+                    var root = uiDocument.rootVisualElement;
+                    if (root == null)
+                    {
+                        throw new McpException("UIDocument has no root visual element.");
+                    }
+
+                    var element = QueryElement(root, elementQuery);
+                    if (element == null)
+                    {
+                        throw new McpException($"UI Toolkit element not found: {elementQuery}");
+                    }
+
+                    string result;
+                    switch (action.ToLower())
+                    {
+                        case "click":
+                            result = PerformToolkitClick(element, elementQuery);
+                            break;
+                        case "input":
+                            result = PerformToolkitInput(element, elementQuery, value);
+                            break;
+                        case "toggle":
+                            result = PerformToolkitToggle(element, elementQuery, value);
+                            break;
+                        case "select":
+                            result = PerformToolkitSelect(element, elementQuery, value);
+                            break;
+                        default:
+                            throw new McpException($"Unknown action: {action}. Supported actions: click, input, toggle, select.");
+                    }
+
+                    return Task.FromResult(result);
+                },
+                cancellationToken
+            );
+        }
+
+        private static VisualElement QueryElement(VisualElement root, string query)
+        {
+            if (string.IsNullOrEmpty(query))
+            {
+                return null;
+            }
+
+            if (query.StartsWith("#"))
+            {
+                return root.Q(query.Substring(1));
+            }
+            else if (query.StartsWith("."))
+            {
+                return root.Q(className: query.Substring(1));
+            }
+            else
+            {
+                var byName = root.Q(query);
+                if (byName != null) return byName;
+
+                return query switch
+                {
+                    "Button" => root.Q<UnityEngine.UIElements.Button>(),
+                    "TextField" => root.Q<TextField>(),
+                    "Toggle" => root.Q<UnityEngine.UIElements.Toggle>(),
+                    "DropdownField" => root.Q<DropdownField>(),
+                    "Slider" => root.Q<Slider>(),
+                    "SliderInt" => root.Q<SliderInt>(),
+                    _ => root.Q(query)
+                };
+            }
+        }
+
+        private static string PerformToolkitClick(VisualElement element, string query)
+        {
+            if (element is UnityEngine.UIElements.Button button)
+            {
+                if (!button.enabledSelf)
+                {
+                    throw new McpException($"Button '{query}' is not enabled.");
+                }
+
+                using (var clickEvent = ClickEvent.GetPooled())
+                {
+                    clickEvent.target = button;
+                    button.SendEvent(clickEvent);
+                }
+                return $"Clicked UI Toolkit button: {query}";
+            }
+
+            if (!element.enabledSelf)
+            {
+                throw new McpException($"Element '{query}' is not enabled.");
+            }
+
+            using (var clickEvent = ClickEvent.GetPooled())
+            {
+                clickEvent.target = element;
+                element.SendEvent(clickEvent);
+            }
+            return $"Clicked UI Toolkit element: {query}";
+        }
+
+        private static string PerformToolkitInput(VisualElement element, string query, string value)
+        {
+            if (element is TextField textField)
+            {
+                if (!textField.enabledSelf)
+                {
+                    throw new McpException($"TextField '{query}' is not enabled.");
+                }
+
+                textField.value = value;
+                return $"Set TextField '{query}' value to: {value}";
+            }
+
+            if (element is BaseField<string> stringField)
+            {
+                if (!stringField.enabledSelf)
+                {
+                    throw new McpException($"Field '{query}' is not enabled.");
+                }
+
+                stringField.value = value;
+                return $"Set field '{query}' value to: {value}";
+            }
+
+            throw new McpException($"Element '{query}' is not a text input field.");
+        }
+
+        private static string PerformToolkitToggle(VisualElement element, string query, string value)
+        {
+            if (element is UnityEngine.UIElements.Toggle toggle)
+            {
+                if (!toggle.enabledSelf)
+                {
+                    throw new McpException($"Toggle '{query}' is not enabled.");
+                }
+
+                bool newValue;
+                if (string.IsNullOrEmpty(value))
+                {
+                    newValue = !toggle.value;
+                }
+                else if (!bool.TryParse(value, out newValue))
+                {
+                    throw new McpException($"Invalid toggle value: {value}. Use 'true' or 'false'.");
+                }
+
+                toggle.value = newValue;
+                return $"Set Toggle '{query}' to: {newValue}";
+            }
+
+            throw new McpException($"Element '{query}' is not a Toggle.");
+        }
+
+        private static string PerformToolkitSelect(VisualElement element, string query, string value)
+        {
+            if (element is DropdownField dropdown)
+            {
+                if (!dropdown.enabledSelf)
+                {
+                    throw new McpException($"DropdownField '{query}' is not enabled.");
+                }
+
+                if (int.TryParse(value, out int index))
+                {
+                    if (index < 0 || index >= dropdown.choices.Count)
+                    {
+                        throw new McpException($"DropdownField index {index} out of range. Valid range: 0-{dropdown.choices.Count - 1}");
+                    }
+                    dropdown.index = index;
+                    return $"Selected DropdownField '{query}' option at index {index}: {dropdown.choices[index]}";
+                }
+                else
+                {
+                    var optionIndex = dropdown.choices.IndexOf(value);
+                    if (optionIndex < 0)
+                    {
+                        throw new McpException($"DropdownField option '{value}' not found. Available options: {string.Join(", ", dropdown.choices)}");
+                    }
+                    dropdown.index = optionIndex;
+                    return $"Selected DropdownField '{query}' option: {value}";
+                }
+            }
+
+            if (element is PopupField<string> popupField)
+            {
+                if (!popupField.enabledSelf)
+                {
+                    throw new McpException($"PopupField '{query}' is not enabled.");
+                }
+
+                if (int.TryParse(value, out int index))
+                {
+                    if (index < 0 || index >= popupField.choices.Count)
+                    {
+                        throw new McpException($"PopupField index {index} out of range. Valid range: 0-{popupField.choices.Count - 1}");
+                    }
+                    popupField.index = index;
+                    return $"Selected PopupField '{query}' option at index {index}: {popupField.choices[index]}";
+                }
+                else
+                {
+                    var optionIndex = popupField.choices.IndexOf(value);
+                    if (optionIndex < 0)
+                    {
+                        throw new McpException($"PopupField option '{value}' not found. Available options: {string.Join(", ", popupField.choices)}");
+                    }
+                    popupField.index = optionIndex;
+                    return $"Selected PopupField '{query}' option: {value}";
+                }
+            }
+
+            throw new McpException($"Element '{query}' is not a DropdownField or PopupField.");
         }
     }
 }
