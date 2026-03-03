@@ -84,6 +84,19 @@ If you prefer to start Unity yourself (e.g. from Unity Hub) and have the MCP con
 
 Optional: `-connectHost 127.0.0.1` (default). The runner then connects to the already-running Unity over TCP and forwards MCP over stdio to your agent. No lock-file check, no manifest change, no Unity spawn.
 
+**Run from TypeScript source (no build):** Point MCP at the runner source and use `tsx` so you don't need `npm run build` after edits. Replace the `command`/`args` with (use your actual repo path):
+
+```json
+"unity": {
+  "command": "npx",
+  "args": ["-y", "tsx", "E:/unity-mcp-server/packages/node-runner/src/index.ts", "-connectPort", "19888"]
+}
+```
+
+`npx -y tsx` runs the `.ts` file directly; change `E:/unity-mcp-server` to where you cloned the repo.
+
+**If you use the built runner** (`dist/index.js`): after changing runner code, run `npm run build` in `packages/node-runner` so `dist/index.js` is updated. Unity Editor scripts are loaded when you open the project, so restart Unity after changing the Unity package.
+
 ## About the Tools
 
 > Meet your Unity AI toolbox.

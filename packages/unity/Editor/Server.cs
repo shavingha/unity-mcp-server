@@ -114,47 +114,61 @@ namespace Nurture.MCP.Editor
 
             if (_mcpPort is int port)
             {
-                // TCP mode: listen for one client (e.g. node-runner with -connectPort). No need to be launched by node-runner.
-                var listener = new TcpListener(IPAddress.Loopback, port);
-                listener.Start();
-                _tcpListener = listener;
-                Debug.Log($"[MCP] Listening on 127.0.0.1:{port}. Connect with node-runner -connectPort {port}");
-                TcpClient client;
-                try
-                {
-                    client = await listener.AcceptTcpClientAsync();
-                }
-                finally
-                {
-                    _tcpListener = null;
-                    listener.Stop();
-                }
-
-                using (client)
-                {
-                    NetworkStream stream = client.GetStream();
-                    await using var transport = new StreamServerTransport(stream, stream, "Nurture Unity MCP", loggerFactory);
-                    await using IMcpServer server = McpServerFactory.Create(
-                        transport,
-                        _options,
-                        loggerFactory,
-                        _services
-                    );
-                    await server.RunAsync(_cancellationTokenSource.Token);
-                }
+                await RunServerTcp(port, loggerFactory);
             }
             else
             {
-                // Stdio mode: used when node-runner spawns Unity (current behavior).
-                await using var stdioTransport = new StdioServerTransport(_options, loggerFactory);
+                await RunServerStdio(loggerFactory);
+            }
+        }
+
+        private static async Task RunServerTcp(int port, UnityLoggerFactory loggerFactory)
+        {
+            Debug.Log($"[MCP] TCP mode: starting listener on 127.0.0.1:{port}");
+            var listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+            _tcpListener = listener;
+
+            TcpClient client;
+            try
+            {
+                Debug.Log($"[MCP] TCP mode: waiting for connection (run node-runner with -connectPort {port})...");
+                client = await listener.AcceptTcpClientAsync();
+                Debug.Log("[MCP] TCP mode: client connected");
+            }
+            finally
+            {
+                _tcpListener = null;
+                listener.Stop();
+            }
+
+            using (client)
+            {
+                NetworkStream stream = client.GetStream();
+                await using var transport = new StreamServerTransport(stream, stream, "Nurture Unity MCP", loggerFactory);
                 await using IMcpServer server = McpServerFactory.Create(
-                    stdioTransport,
+                    transport,
                     _options,
                     loggerFactory,
                     _services
                 );
+                Debug.Log("[MCP] TCP mode: MCP server running");
                 await server.RunAsync(_cancellationTokenSource.Token);
+                Debug.Log("[MCP] TCP mode: session ended");
             }
+        }
+
+        private static async Task RunServerStdio(UnityLoggerFactory loggerFactory)
+        {
+            Debug.Log("[MCP] Stdio mode: using stdin/stdout (launched by node-runner)");
+            await using var stdioTransport = new StdioServerTransport(_options, loggerFactory);
+            await using IMcpServer server = McpServerFactory.Create(
+                stdioTransport,
+                _options,
+                loggerFactory,
+                _services
+            );
+            await server.RunAsync(_cancellationTokenSource.Token);
         }
 
         private static void CollectTools(
