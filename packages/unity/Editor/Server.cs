@@ -1,12 +1,14 @@
 #if !NO_MCP
 
 using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Linq;
 using UnityEditor;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using UnityEngine;
 using System.Reflection;
-using System.Linq;
 using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using System.Threading.Tasks;
@@ -21,19 +23,34 @@ namespace Nurture.MCP.Editor
         private static McpServerOptions _options;
         private static IServiceProvider _services;
 
+        /// <summary>
+        /// When set, Unity listens on this TCP port for one MCP client instead of using stdio.
+        /// Enables connecting to an already-running Unity (e.g. started from Hub) from node-runner with -connectPort.
+        /// </summary>
+        private static int? _mcpPort;
+
         static Server()
         {
             // Register for domain reload to stop the server
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
 
-            // Get whether "-mcp" command line parameter was passed to Unity
-            bool mcp = System
-                .Environment.GetCommandLineArgs()
-                .Any(arg => string.Equals(arg, "-mcp", System.StringComparison.OrdinalIgnoreCase));
-
+            string[] cmdArgs = System.Environment.GetCommandLineArgs();
+            bool mcp = cmdArgs.Any(arg => string.Equals(arg, "-mcp", StringComparison.OrdinalIgnoreCase));
             if (!mcp)
             {
                 return;
+            }
+
+            // Optional: -mcpPort &lt;port&gt; for TCP listen mode (connect to existing Unity from node-runner)
+            for (int i = 0; i < cmdArgs.Length - 1; i++)
+            {
+                if (string.Equals(cmdArgs[i], "-mcpPort", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(cmdArgs[i + 1], out int port)
+                    && port > 0 && port < 65536)
+                {
+                    _mcpPort = port;
+                    break;
+                }
             }
 
             Start();
@@ -92,14 +109,45 @@ namespace Nurture.MCP.Editor
             using var loggerFactory = new UnityLoggerFactory(
                 new LogLevel[] { LogLevel.Error, LogLevel.Critical, LogLevel.Warning }
             );
-            await using var stdioTransport = new StdioServerTransport(_options, loggerFactory);
-            await using IMcpServer server = McpServerFactory.Create(
-                stdioTransport,
-                _options,
-                loggerFactory,
-                _services
-            );
-            await server.RunAsync(_cancellationTokenSource.Token);
+
+            if (_mcpPort is int port)
+            {
+                // TCP mode: listen for one client (e.g. node-runner with -connectPort). No need to be launched by node-runner.
+                var listener = new TcpListener(IPAddress.Loopback, port);
+                listener.Start();
+                Debug.Log($"[MCP] Listening on 127.0.0.1:{port}. Connect with node-runner -connectPort {port}");
+                TcpClient client;
+                try
+                {
+                    client = await listener.AcceptTcpClientAsync(_cancellationTokenSource.Token);
+                }
+                finally
+                {
+                    listener.Stop();
+                }
+
+                NetworkStream stream = client.GetStream();
+                await using var transport = new StreamServerTransport(stream, stream, "Nurture Unity MCP", loggerFactory);
+                await using IMcpServer server = McpServerFactory.Create(
+                    transport,
+                    _options,
+                    loggerFactory,
+                    _services
+                );
+                await server.RunAsync(_cancellationTokenSource.Token);
+            }
+            else
+            {
+                // Stdio mode: used when node-runner spawns Unity (current behavior).
+                await using var stdioTransport = new StdioServerTransport(_options, loggerFactory);
+                await using IMcpServer server = McpServerFactory.Create(
+                    stdioTransport,
+                    _options,
+                    loggerFactory,
+                    _services
+                );
+                await server.RunAsync(_cancellationTokenSource.Token);
+            }
         }
 
         private static void CollectTools(

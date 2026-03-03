@@ -1,6 +1,7 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 import { spawn, exec } from "node:child_process";
+import { createConnection } from "node:net";
 import { exit } from "node:process";
 import { promisify } from "node:util";
 import { ArgumentParser, BooleanOptionalAction } from "argparse";
@@ -11,60 +12,78 @@ import { fileURLToPath } from "node:url";
 
 const execAsync = promisify(exec);
 
-const parser = new ArgumentParser();
-parser.add_argument("-unityPath", { type: String, required: true });
-parser.add_argument("-projectPath", { type: String, required: true });
+const parser = new ArgumentParser({
+  description: "Unity MCP runner. Either spawn Unity (-unityPath, -projectPath) or connect to an already-running Unity (-connectPort).",
+});
+parser.add_argument("-unityPath", { type: String, required: false });
+parser.add_argument("-projectPath", { type: String, required: false });
+parser.add_argument("-connectPort", {
+  type: Number,
+  required: false,
+  help: "Connect to Unity already running with -mcp -mcpPort <port> (e.g. from Hub). No spawn.",
+});
+parser.add_argument("-connectHost", {
+  type: String,
+  required: false,
+  default: "127.0.0.1",
+  help: "Host for -connectPort (default: 127.0.0.1)",
+});
 parser.add_argument("-dev", { type: Boolean, action: BooleanOptionalAction, required: false });
 const args = parser.parse_args();
-const unityPath = args.unityPath;
+
+const connectPort = args.connectPort as number | undefined;
+const connectHost = (args.connectHost as string) || "127.0.0.1";
 const devMode = args.dev;
+
+if (connectPort != null) {
+  // Connect mode: pipe stdio to existing Unity MCP server (TCP). No spawn, no manifest edit.
+  runConnectMode(connectHost, connectPort, devMode);
+  // Process stays alive; exit is called from socket "close" / "error" handlers.
+  return;
+}
+
+// Spawn mode: require -unityPath and -projectPath
+if (!args.unityPath || !args.projectPath) {
+  console.error("Either -connectPort or both -unityPath and -projectPath are required.");
+  exit(1);
+}
+
+const unityPath = args.unityPath as string;
+const projectPath = args.projectPath as string;
 
 let log: fs.FileHandle | undefined = undefined;
 
 if (devMode) {
-  log = await fs.open(path.join(args.projectPath, "mcp.log"), "w");
+  log = await fs.open(path.join(projectPath, "mcp.log"), "w");
 }
 
-// Check to make sure the Unity project path is valid
-
-if (!(await fs.stat(args.projectPath).catch(() => false))) {
+if (!(await fs.stat(projectPath).catch(() => false))) {
   console.error("Unity project path is not valid");
   exit(1);
 }
 
-// Check to see if the Unity project is already open
+const lockFile = path.join(projectPath, "Temp", "UnityLockFile");
 
-const lockFile = path.join(args.projectPath, "Temp", "UnityLockFile");
-
-// First check if lock file exists
 if (await fs.stat(lockFile).catch(() => false)) {
-  // On Unix-like systems (macOS/Linux), use lsof to check if file is actually open
   if (process.platform === "darwin" || process.platform === "linux") {
     try {
       await execAsync(`lsof "${lockFile}"`);
-      // If lsof succeeds, the file is open by a process (Unity is running)
       console.error("Unity project is already open");
       exit(1);
     } catch {
-      // If lsof fails, the file exists but no process has it open
-      // This means Unity is not running, so we can proceed
       await log?.write(`Lock file exists but not open by any process, proceeding...\n`);
     }
   } else {
-    // On Windows, try to delete the lock file to check if Unity is actually running
     try {
       await fs.unlink(lockFile);
-      // If deletion succeeds, Unity is not running, so we can proceed
       await log?.write(`Lock file existed but was successfully deleted, Unity not running, proceeding...\n`);
     } catch {
-      // If deletion fails, Unity is still running and has the file locked
       console.error("Unity project is already open");
       exit(1);
     }
   }
 }
 
-// Load the package.json for the current package we are running in and retrieve the version.
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const packageData = await readPackageUp({
   cwd: currentDir,
@@ -81,31 +100,23 @@ if (devMode) {
 
 await log?.write(`Package URL: ${packageUrl}\n`);
 
-// Load Packages/package.json and add the is.nurture.mcp package to the project.
-// Use `https://github.com/nurture-tech/unity-mcp.git?path=packages/unity#v[VERSION]`.
-// TODO: Use published package version
-
-const packageJsonPath = path.join(args.projectPath, "Packages", "manifest.json");
+const packageJsonPath = path.join(projectPath, "Packages", "manifest.json");
 const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
 packageJson.dependencies["is.nurture.mcp"] = packageUrl;
 await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
-// Only pass Unity-specific arguments, not the MCP runner arguments
-const unityArgs = ["-projectPath", args.projectPath, "-mcp", "-logFile", "-"];
+const unityArgs = ["-projectPath", projectPath, "-mcp", "-logFile", "-"];
 
-// Check if there are additional Unity arguments after "--" separator
 const separatorIndex = process.argv.indexOf("--");
 if (separatorIndex !== -1) {
   unityArgs.push(...process.argv.slice(separatorIndex + 1));
 }
 
-// Set up environment variables for Unity Package Manager
 const env = {
   ...process.env,
 };
 
 if (process.platform === "win32") {
-  // Fix for Windows: Unity Package Manager needs these environment variables
   const userProfile = process.env.USERPROFILE || "C:\\Users\\Default";
   env.PROGRAMDATA = process.env.PROGRAMDATA || "C:\\ProgramData";
   env.ALLUSERSPROFILE = process.env.ALLUSERSPROFILE || "C:\\ProgramData";
@@ -116,24 +127,55 @@ if (process.platform === "win32") {
 const proc = spawn(unityPath, unityArgs, { env });
 
 try {
-  const code = await new Promise<number | null>((resolve, reject) => {
-    let buffer = ""; // Buffer to accumulate partial lines
+  const code = await pipeStdioToProcess(proc, log);
+  exit(code ?? 0);
+} finally {
+  log?.close();
+}
+
+async function runConnectMode(host: string, port: number, devMode: boolean): Promise<void> {
+  const log: fs.FileHandle | undefined = devMode ? await fs.open(path.join(process.cwd(), "mcp.log"), "w") : undefined;
+
+  const socket = createConnection({ host, port }, () => {
+    process.stdin.pipe(socket as NodeJS.WritableStream, { end: true });
+  });
+
+  let buffer = "";
+  socket.on("data", (data: Buffer) => {
+    buffer += data.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (line.startsWith("{")) {
+        process.stdout.write(line + "\n");
+        log?.write(line + "\n").catch(() => {});
+      }
+    }
+  });
+
+  socket.on("close", (hadError) => {
+    log?.close().catch(() => {});
+    exit(hadError ? 1 : 0);
+  });
+  socket.on("error", (err) => {
+    console.error(err.message);
+    log?.close().catch(() => {});
+    exit(1);
+  });
+}
+
+function pipeStdioToProcess(proc: ReturnType<typeof spawn>, log: fs.FileHandle | undefined): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
 
     process.stdin.on("data", async (data) => {
       await log?.write(data.toString());
       proc.stdin?.write(data);
     });
     proc.stdout?.on("data", async (data) => {
-      // Add new data to buffer
       buffer += data.toString();
-
-      // Split buffer into lines
       const lines = buffer.split("\n");
-
-      // Keep the last line in buffer (it might be incomplete)
       buffer = lines.pop() || "";
-
-      // Process complete lines
       for (const line of lines) {
         if (line.startsWith("{")) {
           process.stdout.write(line + "\n");
@@ -148,8 +190,4 @@ try {
       reject(err.message);
     });
   });
-
-  exit(code ?? 0);
-} finally {
-  log?.close();
 }

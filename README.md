@@ -61,6 +61,29 @@
 
 This will automatically install the `is.nurture.mcp` package in your unity project. Feel free to commit those changes to source control.
 
+### Connect to existing Unity (no spawn)
+
+If you prefer to start Unity yourself (e.g. from Unity Hub) and have the MCP connect to it:
+
+1. **Start Unity with MCP TCP port**: add these arguments when launching the editor (e.g. in Unity Hub → project → "Add arguments to run" or a custom shortcut):
+   - `-mcp -mcpPort 19888`
+     (Use any free port; `19888` is the default.)
+
+2. **Configure the runner to connect instead of spawn**: in `mcp.json` use `-connectPort` (and optionally `-connectHost`) instead of `-unityPath` / `-projectPath`:
+
+```json
+{
+  "mcpServers": {
+    "unity": {
+      "command": "npx",
+      "args": ["-y", "@nurture-tech/unity-mcp-runner", "-connectPort", "19888"]
+    }
+  }
+}
+```
+
+Optional: `-connectHost 127.0.0.1` (default). The runner then connects to the already-running Unity over TCP and forwards MCP over stdio to your agent. No lock-file check, no manifest change, no Unity spawn.
+
 ## About the Tools
 
 > Meet your Unity AI toolbox.
@@ -120,7 +143,7 @@ Union uses the official [C# MCP SDK](https://github.com/modelcontextprotocol/csh
 
 Here are some tips to get the most out of Union:
 
-- 🚀 **Launch through your agent**: Always launch Unity through your AI agent's MCP integration. Launching Unity from the Hub will prevent the MCP server from connecting.
+- 🚀 **Two ways to connect**: (1) **Spawn**: use `-unityPath` and `-projectPath` so the runner starts Unity (recommended for a single workflow). (2) **Connect**: start Unity yourself with `-mcp -mcpPort <port>`, then use `-connectPort <port>` in the runner so it connects to the existing process (no spawn).
 
 - 📂 **Per-project setup**: If your agent supports it, configure the MCP server in your per-project settings. This allows you to seamlessly switch between Unity projects.
 
