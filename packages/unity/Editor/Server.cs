@@ -29,6 +29,8 @@ namespace Nurture.MCP.Editor
         /// </summary>
         private static int? _mcpPort;
 
+        private static TcpListener _tcpListener;
+
         static Server()
         {
             // Register for domain reload to stop the server
@@ -115,26 +117,31 @@ namespace Nurture.MCP.Editor
                 // TCP mode: listen for one client (e.g. node-runner with -connectPort). No need to be launched by node-runner.
                 var listener = new TcpListener(IPAddress.Loopback, port);
                 listener.Start();
+                _tcpListener = listener;
                 Debug.Log($"[MCP] Listening on 127.0.0.1:{port}. Connect with node-runner -connectPort {port}");
                 TcpClient client;
                 try
                 {
-                    client = await listener.AcceptTcpClientAsync(_cancellationTokenSource.Token);
+                    client = await listener.AcceptTcpClientAsync();
                 }
                 finally
                 {
+                    _tcpListener = null;
                     listener.Stop();
                 }
 
-                NetworkStream stream = client.GetStream();
-                await using var transport = new StreamServerTransport(stream, stream, "Nurture Unity MCP", loggerFactory);
-                await using IMcpServer server = McpServerFactory.Create(
-                    transport,
-                    _options,
-                    loggerFactory,
-                    _services
-                );
-                await server.RunAsync(_cancellationTokenSource.Token);
+                using (client)
+                {
+                    NetworkStream stream = client.GetStream();
+                    await using var transport = new StreamServerTransport(stream, stream, "Nurture Unity MCP", loggerFactory);
+                    await using IMcpServer server = McpServerFactory.Create(
+                        transport,
+                        _options,
+                        loggerFactory,
+                        _services
+                    );
+                    await server.RunAsync(_cancellationTokenSource.Token);
+                }
             }
             else
             {
@@ -229,6 +236,8 @@ namespace Nurture.MCP.Editor
         private static void Stop()
         {
             Debug.Log("[MCP] Stopping server");
+            _tcpListener?.Stop();
+            _tcpListener = null;
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource = null;
         }
