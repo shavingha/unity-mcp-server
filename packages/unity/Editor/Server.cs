@@ -133,7 +133,16 @@ namespace Nurture.MCP.Editor
             try
             {
                 Debug.Log($"[MCP] TCP mode: waiting for connection (run node-runner with -connectPort {port})...");
-                client = await listener.AcceptTcpClientAsync();
+                // AcceptTcpClientAsync(CancellationToken) is not available in this Unity/.NET version, so we use
+                // WhenAny with a task that completes when the token is cancelled; Stop() then calls listener.Stop() to unblock the accept.
+                var acceptTask = listener.AcceptTcpClientAsync();
+                var completed = await Task.WhenAny(acceptTask, Task.Delay(Timeout.Infinite, _cancellationTokenSource.Token));
+                if (completed != acceptTask)
+                {
+                    _tcpListener?.Stop();
+                    _cancellationTokenSource.Token.ThrowIfCancellationRequested();
+                }
+                client = await acceptTask;
                 Debug.Log("[MCP] TCP mode: client connected");
             }
             finally

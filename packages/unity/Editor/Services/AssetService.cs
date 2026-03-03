@@ -28,11 +28,11 @@ namespace Nurture.MCP.Editor.Services
     {
         public record AssetIndexEntry
         {
-            public string Guid { get; set; }
-            public string FileID { get; set; }
-            public string Path { get; set; }
-            public string Type { get; set; }
-            public string Name { get; set; }
+            public string Guid { get; set; } = null!;
+            public string FileID { get; set; } = null!;
+            public string Path { get; set; } = null!;
+            public string Type { get; set; } = null!;
+            public string Name { get; set; } = null!;
         }
 
         public record SelectedAssetEntry : AssetIndexEntry
@@ -577,7 +577,7 @@ namespace Nurture.MCP.Editor.Services
                                         isRootIsolatedPrefab
                                     ),
                                     ScenePath = isRootIsolatedPrefab ? null : gameObject.scene.path,
-                                    EditingPrefab = isRootIsolatedPrefab
+                                    EditingPrefab = isRootIsolatedPrefab && prefabStage != null
                                         ? new()
                                         {
                                             Path = prefabStage.assetPath,
