@@ -140,6 +140,18 @@ namespace Nurture.MCP.Editor
                 if (completed != acceptTask)
                 {
                     _tcpListener?.Stop();
+                    try
+                    {
+                        await acceptTask;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Expected when listener is stopped during accept.
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // May be thrown when listener is stopped.
+                    }
                     _cancellationTokenSource.Token.ThrowIfCancellationRequested();
                 }
                 client = await acceptTask;
