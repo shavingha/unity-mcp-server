@@ -1,6 +1,7 @@
 #if !NO_MCP
 
 using System;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Linq;
@@ -131,7 +132,11 @@ namespace Nurture.MCP.Editor
 
             try
             {
-                while (!_cancellationTokenSource.Token.IsCancellationRequested)
+                var token = _cancellationTokenSource.Token;
+                int nextSessionId = 0;
+                var sessions = new ConcurrentDictionary<int, Task>();
+
+                while (!token.IsCancellationRequested)
                 {
                     Debug.Log(
                         $"[MCP] TCP mode: waiting for connection (run node-runner with -connectPort {port})..."
@@ -140,10 +145,7 @@ namespace Nurture.MCP.Editor
                     // AcceptTcpClientAsync(CancellationToken) is not available in this Unity/.NET version, so we use
                     // WhenAny with a task that completes when the token is cancelled; Stop() then calls listener.Stop() to unblock the accept.
                     var acceptTask = listener.AcceptTcpClientAsync();
-                    var completed = await Task.WhenAny(
-                        acceptTask,
-                        Task.Delay(Timeout.Infinite, _cancellationTokenSource.Token)
-                    );
+                    var completed = await Task.WhenAny(acceptTask, Task.Delay(Timeout.Infinite, token));
 
                     if (completed != acceptTask)
                     {
@@ -180,7 +182,7 @@ namespace Nurture.MCP.Editor
                         || ex is SocketException
                     )
                     {
-                        if (_cancellationTokenSource.Token.IsCancellationRequested)
+                        if (token.IsCancellationRequested)
                         {
                             break;
                         }
@@ -188,39 +190,88 @@ namespace Nurture.MCP.Editor
                         throw;
                     }
 
-                    using (client)
-                    {
-                        Debug.Log("[MCP] TCP mode: client connected");
-                        NetworkStream stream = client.GetStream();
-                        await using var transport = new StreamServerTransport(
-                            stream,
-                            stream,
-                            "Nurture Unity MCP",
-                            loggerFactory
-                        );
-                        await using IMcpServer server = McpServerFactory.Create(
-                            transport,
-                            _options,
-                            loggerFactory,
-                            _services
-                        );
-                        Debug.Log("[MCP] TCP mode: MCP server running");
-                        try
+                    int sessionId = Interlocked.Increment(ref nextSessionId);
+                    var sessionTask = RunTcpSession(sessionId, client, loggerFactory, token).ContinueWith(
+                        _ =>
                         {
-                            await server.RunAsync(_cancellationTokenSource.Token);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // Expected during shutdown.
-                        }
-                        Debug.Log("[MCP] TCP mode: session ended");
-                    }
+                            sessions.TryRemove(sessionId, out _);
+                        },
+                        CancellationToken.None
+                    );
+                    sessions[sessionId] = sessionTask;
+                }
+
+                // Graceful shutdown: wait for all active sessions to finish.
+                try
+                {
+                    await Task.WhenAll(sessions.Values);
+                }
+                catch (Exception)
+                {
+                    // Individual session tasks handle their own exceptions and log; no need to fail shutdown.
                 }
             }
             finally
             {
                 _tcpListener = null;
                 listener.Stop();
+            }
+        }
+
+        private static async Task RunTcpSession(
+            int sessionId,
+            TcpClient client,
+            UnityLoggerFactory loggerFactory,
+            CancellationToken token
+        )
+        {
+            try
+            {
+                using (client)
+                {
+                    client.NoDelay = true;
+
+                    string remote;
+                    try
+                    {
+                        remote = client.Client?.RemoteEndPoint?.ToString() ?? "unknown";
+                    }
+                    catch
+                    {
+                        remote = "unknown";
+                    }
+
+                    Debug.Log($"[MCP] TCP session {sessionId}: client connected ({remote})");
+
+                    NetworkStream stream = client.GetStream();
+                    await using var transport = new StreamServerTransport(
+                        stream,
+                        stream,
+                        $"Nurture Unity MCP (tcp:{sessionId})",
+                        loggerFactory
+                    );
+                    await using IMcpServer server = McpServerFactory.Create(
+                        transport,
+                        _options,
+                        loggerFactory,
+                        _services
+                    );
+
+                    Debug.Log($"[MCP] TCP session {sessionId}: MCP server running");
+                    try
+                    {
+                        await server.RunAsync(token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected during shutdown.
+                    }
+                    Debug.Log($"[MCP] TCP session {sessionId}: session ended");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MCP] TCP session {sessionId}: session failed: {ex}");
             }
         }
 
