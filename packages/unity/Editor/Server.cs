@@ -129,53 +129,98 @@ namespace Nurture.MCP.Editor
             listener.Start();
             _tcpListener = listener;
 
-            TcpClient client;
             try
             {
-                Debug.Log($"[MCP] TCP mode: waiting for connection (run node-runner with -connectPort {port})...");
-                // AcceptTcpClientAsync(CancellationToken) is not available in this Unity/.NET version, so we use
-                // WhenAny with a task that completes when the token is cancelled; Stop() then calls listener.Stop() to unblock the accept.
-                var acceptTask = listener.AcceptTcpClientAsync();
-                var completed = await Task.WhenAny(acceptTask, Task.Delay(Timeout.Infinite, _cancellationTokenSource.Token));
-                if (completed != acceptTask)
+                while (!_cancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    _tcpListener?.Stop();
+                    Debug.Log(
+                        $"[MCP] TCP mode: waiting for connection (run node-runner with -connectPort {port})..."
+                    );
+
+                    // AcceptTcpClientAsync(CancellationToken) is not available in this Unity/.NET version, so we use
+                    // WhenAny with a task that completes when the token is cancelled; Stop() then calls listener.Stop() to unblock the accept.
+                    var acceptTask = listener.AcceptTcpClientAsync();
+                    var completed = await Task.WhenAny(
+                        acceptTask,
+                        Task.Delay(Timeout.Infinite, _cancellationTokenSource.Token)
+                    );
+
+                    if (completed != acceptTask)
+                    {
+                        // Cancellation requested: stop listener and observe any accept failure, then exit loop.
+                        _tcpListener?.Stop();
+                        try
+                        {
+                            await acceptTask;
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // Expected when listener is stopped during accept.
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            // May be thrown when listener is stopped.
+                        }
+                        catch (SocketException)
+                        {
+                            // Can be thrown when listener is stopped.
+                        }
+
+                        break;
+                    }
+
+                    TcpClient client;
                     try
                     {
-                        await acceptTask;
+                        client = await acceptTask;
                     }
-                    catch (ObjectDisposedException)
+                    catch (Exception ex) when (
+                        ex is ObjectDisposedException
+                        || ex is InvalidOperationException
+                        || ex is SocketException
+                    )
                     {
-                        // Expected when listener is stopped during accept.
+                        if (_cancellationTokenSource.Token.IsCancellationRequested)
+                        {
+                            break;
+                        }
+
+                        throw;
                     }
-                    catch (InvalidOperationException)
+
+                    using (client)
                     {
-                        // May be thrown when listener is stopped.
+                        Debug.Log("[MCP] TCP mode: client connected");
+                        NetworkStream stream = client.GetStream();
+                        await using var transport = new StreamServerTransport(
+                            stream,
+                            stream,
+                            "Nurture Unity MCP",
+                            loggerFactory
+                        );
+                        await using IMcpServer server = McpServerFactory.Create(
+                            transport,
+                            _options,
+                            loggerFactory,
+                            _services
+                        );
+                        Debug.Log("[MCP] TCP mode: MCP server running");
+                        try
+                        {
+                            await server.RunAsync(_cancellationTokenSource.Token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Expected during shutdown.
+                        }
+                        Debug.Log("[MCP] TCP mode: session ended");
                     }
-                    _cancellationTokenSource.Token.ThrowIfCancellationRequested();
                 }
-                client = await acceptTask;
-                Debug.Log("[MCP] TCP mode: client connected");
             }
             finally
             {
                 _tcpListener = null;
                 listener.Stop();
-            }
-
-            using (client)
-            {
-                NetworkStream stream = client.GetStream();
-                await using var transport = new StreamServerTransport(stream, stream, "Nurture Unity MCP", loggerFactory);
-                await using IMcpServer server = McpServerFactory.Create(
-                    transport,
-                    _options,
-                    loggerFactory,
-                    _services
-                );
-                Debug.Log("[MCP] TCP mode: MCP server running");
-                await server.RunAsync(_cancellationTokenSource.Token);
-                Debug.Log("[MCP] TCP mode: session ended");
             }
         }
 
